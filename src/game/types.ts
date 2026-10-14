@@ -38,9 +38,16 @@ export interface PlayerState {
   dashesStarted: number
 }
 
+export type TutorialCue = 'line' | 'band'
+
 export interface Telegraph {
   kinds: AttackKind[]
   remaining: number
+  tutorial?: TutorialCue
+  aimX?: number
+  aimY?: number
+  /** When true, the left half of the tutorial band is the safe side. */
+  safeFromLeft?: boolean
 }
 
 export interface BulletHazard {
@@ -58,6 +65,8 @@ export interface BulletHazard {
   life: number
   justDodgeDashId: number
   didHit: boolean
+  frozenT?: number
+  whiteT?: number
 }
 
 export interface LaserHazard {
@@ -74,6 +83,8 @@ export interface LaserHazard {
   duration: number
   justDodgeDashId: number
   didHit: boolean
+  frozenT?: number
+  whiteT?: number
 }
 
 export type Hazard = BulletHazard | LaserHazard

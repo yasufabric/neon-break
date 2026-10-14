@@ -22,6 +22,8 @@ export interface CreateOptions {
   h: number
   attacksEnabled?: boolean
   bossHp?: number
+  /** First run. Starts in play so the 0–4s clock runs before the first touch. */
+  onboarding?: boolean
 }
 
 export function createFight(options: CreateOptions): Fight {
@@ -66,10 +68,22 @@ export function createFight(options: CreateOptions): Fight {
     flashT: 0,
     sweep: { x0: 0, y0: 0, x1: 0, y1: 0, dashing: false },
     dashEnded: false,
+    onboarding: options.onboarding === true,
+    onboardingDone: false,
+    tutorialSlot: 0,
+    tutorialLaserArmed: false,
+    tutorialLasersFired: 0,
+    tutorialShotsFired: 0,
+    barPulse: 0,
+    calmChunks: 0,
   }
   fight.player.x = fight.player.x
   clampPlayer(fight)
-  if (fight.attacksEnabled) openTelegraph(fight)
+  if (fight.onboarding) {
+    fight.mode = 'play'
+  } else if (fight.attacksEnabled) {
+    openTelegraph(fight)
+  }
   return fight
 }
 
@@ -78,6 +92,7 @@ export function resetFight(fight: Fight): void {
     w: fight.w,
     h: fight.h,
     attacksEnabled: fight.attacksEnabled,
+    onboarding: false,
   })
   next.mode = 'play'
   Object.assign(fight, next)
@@ -135,6 +150,7 @@ export function stepFight(fight: Fight, input: FrameInput, realDt: number): Step
   updatePlayer(fight, input, dt, result)
   const fired = updateSchedule(fight, worldDt)
   if (fired) result.fired = fired
+  decayLocks(fight, dt)
   moveHazards(fight, worldDt)
   resolveHits(fight, result)
   finishDash(fight)
@@ -248,7 +264,9 @@ function resolveHits(fight: Fight, result: StepResult): void {
   const radius = hitboxRadius(fight.w)
   const sweep = fight.sweep
   for (const hazard of fight.attacks) {
-    if (!overlaps(hazard, sweep, radius)) continue
+    const touching = overlaps(hazard, sweep, radius)
+    const grazing = !touching && tutorialFlickGraze(fight, hazard, sweep)
+    if (!touching && !grazing) continue
     if (sweep.dashing) {
       if (hazard.justDodgeDashId !== fight.player.dashId) {
         hazard.justDodgeDashId = fight.player.dashId
@@ -259,6 +277,8 @@ function resolveHits(fight: Fight, result: StepResult): void {
     }
     if (hazard.didHit || fight.player.hitInvuln > 0) continue
     hazard.didHit = true
+    hazard.frozenT = config.hit.freezeSec
+    hazard.whiteT = config.hit.freezeSec
     fight.player.hp -= 1
     fight.player.hits += 1
     fight.player.hitInvuln = config.player.hitInvulnSec
@@ -271,6 +291,33 @@ function resolveHits(fight: Fight, result: StepResult): void {
       return
     }
   }
+}
+
+/** A late sideways flick past an aimed tutorial shot, before the circles meet. */
+function tutorialFlickGraze(fight: Fight, hazard: Hazard, sweep: Sweep): boolean {
+  if (!sweep.dashing || !fight.onboarding || fight.onboardingDone) return false
+  if (hazard.type !== 'bullet' || hazard.kind !== 'straight') return false
+  const graze = config.onboarding.flickGrazeWidths * fight.w
+  return pointSegmentDistance(sweep.x0, sweep.y0, hazard.px, hazard.py, hazard.x, hazard.y) <= graze
+}
+
+function pointSegmentDistance(
+  px: number,
+  py: number,
+  ax: number,
+  ay: number,
+  bx: number,
+  by: number,
+): number {
+  const abx = bx - ax
+  const aby = by - ay
+  const apx = px - ax
+  const apy = py - ay
+  const ab2 = abx * abx + aby * aby
+  const t = ab2 <= 1e-12 ? 0 : Math.max(0, Math.min(1, (apx * abx + apy * aby) / ab2))
+  const dx = ax + abx * t - px
+  const dy = ay + aby * t - py
+  return Math.hypot(dx, dy)
 }
 
 function overlaps(hazard: Hazard, sweep: Sweep, radius: number): boolean {
@@ -386,9 +433,21 @@ function clampPlayer(fight: Fight): void {
   player.y = Math.max(minY, Math.min(maxY, player.y))
 }
 
+function decayLocks(fight: Fight, dt: number): void {
+  for (const hazard of fight.attacks) {
+    if (hazard.frozenT !== undefined && hazard.frozenT > 0) {
+      hazard.frozenT = Math.max(0, hazard.frozenT - dt)
+    }
+    if (hazard.whiteT !== undefined && hazard.whiteT > 0) {
+      hazard.whiteT = Math.max(0, hazard.whiteT - dt)
+    }
+  }
+}
+
 function decayJuice(fight: Fight, dt: number): void {
   if (fight.shakeT > 0) fight.shakeT = Math.max(0, fight.shakeT - dt)
   if (fight.flashT > 0) fight.flashT = Math.max(0, fight.flashT - dt)
+  if (fight.barPulse > 0) fight.barPulse = Math.max(0, fight.barPulse - dt)
 }
 
 /**
@@ -396,6 +455,7 @@ function decayJuice(fight: Fight, dt: number): void {
  * 0.3s windup does not stretch the clear time. Boost DPS starts when slow-mo ends.
  */
 function applyDamage(fight: Fight, realDt: number): boolean {
+  const previousTime = fight.time
   let left = realDt
   while (left > 1e-12 && fight.mode === 'play') {
     let rate: number = config.player.dps
@@ -432,6 +492,30 @@ function applyDamage(fight: Fight, realDt: number): boolean {
       if (fight.boostT <= 1e-9) fight.boostT = 0
     } else {
       left = 0
+    }
+  }
+  if (fight.mode === 'play' && applyCalmChunks(fight, previousTime)) return true
+  return false
+}
+
+/** Calm-phase beats on top of auto-fire, so the boss bar steps down in view. */
+function applyCalmChunks(fight: Fight, previousTime: number): boolean {
+  if (!fight.onboarding || fight.onboardingDone) return false
+  const interval = config.onboarding.calmChunkIntervalSec
+  const end = config.onboarding.calmSec
+  if (previousTime >= end || interval <= 0) return false
+  const prevN = Math.floor(Math.min(previousTime, end) / interval)
+  const nowN = Math.floor(Math.min(fight.time, end) / interval)
+  for (let n = prevN + 1; n <= nowN; n++) {
+    const at = n * interval
+    if (at <= 0 || at > end + 1e-9) continue
+    fight.bossHp = Math.max(0, fight.bossHp - config.onboarding.calmChunkHp)
+    fight.calmChunks += 1
+    fight.barPulse = config.onboarding.barGlowPulseSec
+    if (fight.bossHp <= 1e-6) {
+      fight.bossHp = 0
+      fight.mode = 'clear'
+      return true
     }
   }
   return false

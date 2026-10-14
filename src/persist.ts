@@ -1,4 +1,10 @@
 const KEY = 'neon-break-best'
+const ONBOARDING_KEY = 'neon-break-onboarded'
+
+export interface KeyValue {
+  getItem(key: string): string | null
+  setItem(key: string, value: string): void
+}
 
 export interface Save {
   bestTime: number | null
@@ -27,6 +33,14 @@ export function loadSave(): Save {
 
 export function writeSave(save: Save): void {
   localStorage.setItem(KEY, JSON.stringify(save))
+}
+
+export function readOnboardingDone(storage: KeyValue): boolean {
+  return storage.getItem(ONBOARDING_KEY) === '1'
+}
+
+export function writeOnboardingDone(storage: KeyValue): void {
+  storage.setItem(ONBOARDING_KEY, '1')
 }
 
 export function recordRun(save: Save, time: number, justDodges: number, cleared: boolean): Save {

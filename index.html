@@ -19,6 +19,23 @@
   <body>
     <canvas id="view"></canvas>
     <div id="flash"></div>
+    <div id="tutorial" hidden>
+      <div id="laser-band" hidden>
+        <div class="danger"></div>
+        <div class="safe"></div>
+      </div>
+      <div id="aim-line" hidden></div>
+      <div id="gold-halo" hidden></div>
+      <div id="finger" hidden>
+        <svg viewBox="0 0 64 88" aria-hidden="true">
+          <path
+            fill="#7dfff4"
+            d="M30 6c-3 0-5 2.4-5 5.4V40h-6.2c-4.2 0-7.2 3.6-6.4 7.6l6.2 28.2c.8 3.6 4 6.2 7.6 6.2h12.6c3.8 0 7-2.8 7.6-6.6l4.2-24.4c.4-2.2 2.2-3.8 4.4-3.8 2.6 0 4.6-2.2 4.4-4.8l-.8-14.2c-.2-2.6-2.4-4.6-5-4.6-1.6 0-3 .8-3.8 2l-2.2 3.2V18.2c0-3-2.4-5.4-5.4-5.4s-5.4 2.4-5.4 5.4V40H36V11.4C36 8.4 33.4 6 30.4 6H30z"
+          />
+        </svg>
+      </div>
+      <div id="numbers"></div>
+    </div>
     <div id="hud">
       <div id="boss"><div id="boss-fill"></div></div>
       <button id="mute" type="button" aria-label="Mute">♪</button>

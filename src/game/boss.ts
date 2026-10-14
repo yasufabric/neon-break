@@ -1,4 +1,5 @@
 import { config } from './config'
+import { onboardingPhase } from './onboarding'
 import type { Fight } from './state'
 import type { AttackKind, BulletHazard, Hazard, LaserHazard, Phase } from './types'
 
@@ -10,6 +11,11 @@ export function gapSeconds(bossHp: number, bossMaxHp: number): number {
 
 export function phaseForHp(bossHp: number, bossMaxHp: number): Phase {
   return bossHp / bossMaxHp < config.boss.enrageHpFraction ? 2 : 1
+}
+
+/** Homing missiles exist only once the boss is under half HP. */
+export function missileAllowed(bossHp: number, bossMaxHp: number): boolean {
+  return bossHp / bossMaxHp < config.boss.enrageHpFraction
 }
 
 function patternList(phase: Phase): readonly (readonly AttackKind[])[] {
@@ -32,18 +38,30 @@ export function openTelegraph(fight: Fight): void {
     fight.patternIndex = 0
   }
   const list = patternList(fight.phase)
-  const index = fight.patternIndex % list.length
-  const kinds = list[index]
-  if (!kinds) return
-  fight.patternIndex += 1
-  fight.telegraph = {
-    kinds: [...kinds],
-    remaining: config.boss.telegraphSec,
+  for (let i = 0; i < list.length; i++) {
+    const index = fight.patternIndex % list.length
+    const raw = list[index]
+    fight.patternIndex += 1
+    if (!raw) continue
+    const kinds = raw.filter(
+      (kind) => kind !== 'missile' || missileAllowed(fight.bossHp, fight.bossMaxHp),
+    )
+    if (kinds.length === 0) continue
+    fight.telegraph = {
+      kinds: [...kinds],
+      remaining: config.boss.telegraphSec,
+    }
+    return
   }
 }
 
 export function updateSchedule(fight: Fight, worldDt: number): AttackKind[] | null {
   if (!fight.attacksEnabled || worldDt <= 0) return null
+  if (fight.onboarding && !fight.onboardingDone) return updateTutorial(fight, worldDt)
+  return updateNormal(fight, worldDt)
+}
+
+function updateNormal(fight: Fight, worldDt: number): AttackKind[] | null {
   let left = worldDt
   let fired: AttackKind[] | null = null
   while (left > 1e-9) {
@@ -71,6 +89,113 @@ export function updateSchedule(fight: Fight, worldDt: number): AttackKind[] | nu
   return fired
 }
 
+function updateTutorial(fight: Fight, worldDt: number): AttackKind[] | null {
+  const phase = onboardingPhase(fight.time)
+  switch (phase) {
+    case 'calm':
+      fight.telegraph = null
+      return null
+    case 'straight':
+      return updateStraightTutorial(fight, worldDt)
+    case 'laser':
+      return updateLaserTutorial(fight, worldDt)
+    case 'live':
+      fight.onboardingDone = true
+      fight.telegraph = null
+      fight.gapRemaining = 0
+      return updateNormal(fight, worldDt)
+    default: {
+      const never: never = phase
+      return never
+    }
+  }
+}
+
+function updateStraightTutorial(fight: Fight, worldDt: number): AttackKind[] | null {
+  let left = worldDt
+  let fired: AttackKind[] | null = null
+  let spins = 0
+  while (left > 1e-9 && spins++ < 8) {
+    const line = fight.telegraph?.tutorial === 'line' ? fight.telegraph : null
+    if (line) {
+      if (line.remaining > left) {
+        line.remaining -= left
+        return fired
+      }
+      left -= line.remaining
+      const aimX = line.aimX ?? fight.player.x
+      const aimY = line.aimY ?? fight.player.y
+      fight.telegraph = null
+      spawnTutorialStraight(fight, aimX, aimY)
+      fight.tutorialShotsFired += 1
+      fired = ['straight']
+      continue
+    }
+    const start =
+      config.onboarding.calmSec + fight.tutorialSlot * config.onboarding.straightIntervalSec
+    if (start >= config.onboarding.straightSec - 1e-9) return fired
+    if (fight.time + 1e-8 < start) return fired
+    fight.tutorialSlot += 1
+    fight.telegraph = {
+      kinds: ['straight'],
+      remaining: config.boss.telegraphSec,
+      tutorial: 'line',
+      aimX: fight.player.x,
+      aimY: fight.player.y,
+    }
+  }
+  return fired
+}
+
+function updateLaserTutorial(fight: Fight, worldDt: number): AttackKind[] | null {
+  if (fight.tutorialLasersFired > 0) return null
+  if (!fight.tutorialLaserArmed) {
+    fight.attacks = []
+    fight.tutorialLaserArmed = true
+    fight.telegraph = {
+      kinds: ['laser'],
+      remaining: config.boss.telegraphSec,
+      tutorial: 'band',
+      safeFromLeft: !fight.laserFromLeft,
+    }
+  }
+  const band = fight.telegraph?.tutorial === 'band' ? fight.telegraph : null
+  if (!band) return null
+  if (band.remaining > worldDt) {
+    band.remaining -= worldDt
+    return null
+  }
+  fight.telegraph = null
+  spawnLaser(fight)
+  fight.tutorialLasersFired += 1
+  return ['laser']
+}
+
+function spawnTutorialStraight(fight: Fight, aimX: number, aimY: number): void {
+  const speed =
+    config.boss.straightSpeedWidthsPerSec * fight.w * config.onboarding.bulletSpeedScale
+  const y = fight.h * config.boss.spawnYFraction
+  const dy = aimY - y
+  const len = Math.abs(dy) || 1
+  const r = config.boss.straightRadiusWidths * fight.w
+  fight.attacks.push({
+    type: 'bullet',
+    id: fight.nextId++,
+    kind: 'straight',
+    x: aimX,
+    y,
+    px: aimX,
+    py: y,
+    vx: 0,
+    vy: (dy / len) * speed,
+    r,
+    homingT: 0,
+    life: config.boss.bulletLifeSec,
+    justDodgeDashId: 0,
+    didHit: false,
+  })
+}
+
 function spawn(fight: Fight, kind: AttackKind): void {
   switch (kind) {
     case 'straight':
@@ -80,6 +205,7 @@ function spawn(fight: Fight, kind: AttackKind): void {
       spawnLaser(fight)
       return
     case 'missile':
+      if (!missileAllowed(fight.bossHp, fight.bossMaxHp)) return
       spawnMissiles(fight)
       return
     default: {
@@ -175,6 +301,12 @@ export function moveHazards(fight: Fight, worldDt: number): void {
   if (worldDt <= 0) return
   const next: Hazard[] = []
   for (const hazard of fight.attacks) {
+    if ((hazard.frozenT ?? 0) > 0) {
+      hazard.px = hazard.x
+      if (hazard.type === 'bullet') hazard.py = hazard.y
+      next.push(hazard)
+      continue
+    }
     if (hazard.type === 'laser') {
       hazard.px = hazard.x
       hazard.t += worldDt

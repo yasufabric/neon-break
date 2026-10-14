@@ -70,7 +70,8 @@ export const config = {
     missileTurn: 7,
     missileLifeSec: 4.5,
     bulletLifeSec: 4,
-    phase1: [['straight'], ['laser'], ['missile']] as readonly (readonly AttackKind[])[],
+    /** No missiles here. Homing missiles exist only under `enrageHpFraction`. */
+    phase1: [['straight'], ['laser']] as readonly (readonly AttackKind[])[],
     phase2: [
       ['straight', 'missile'],
       ['laser', 'straight'],
@@ -115,6 +116,43 @@ export const config = {
     firstTriggerSec: 0.5,
     /** Extra pad so a boost fully ends before the next scripted just dodge. */
     triggerSpacingPadSec: 0.25,
+  },
+  /**
+   * First run only. Clock starts as soon as that run does, before the first touch.
+   * 0–calmSec: no attacks. calmSec–straightSec: one aimed shot per interval.
+   * straightSec–laserSec: one laser. After laserSec: the normal script.
+   */
+  onboarding: {
+    calmSec: 4,
+    straightSec: 12,
+    laserSec: 20,
+    straightIntervalSec: 2,
+    bulletSpeedScale: 0.6,
+    /**
+     * Center distance, in screen widths, inside which a sideways flick still
+     * just-dodges an aimed tutorial shot. Wide enough for a late flick, short
+     * of the whole approach.
+     */
+    flickGrazeWidths: 0.24,
+    /** Extra HP removed on each calm beat so the boss bar steps down in view. */
+    calmChunkIntervalSec: 1,
+    calmChunkHp: 80,
+    barGlowPulseSec: 0.45,
+    fingerSwingHz: 0.7,
+    fingerAmplitudeWidths: 0.16,
+    fingerBelowShipFraction: 0.1,
+    fingerSizePx: 56,
+    aimLinePx: 4,
+    bandHeightFraction: 0.2,
+    damageNumberPx: 22,
+    damageNumberScale: 3,
+    damageNumberLifeSec: 0.9,
+    haloPx: 96,
+  },
+  hit: {
+    /** The attack that landed holds still and flashes white for this long. */
+    freezeSec: 0.2,
+    shatterSec: 0.45,
   },
 }
 

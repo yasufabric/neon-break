@@ -68,6 +68,10 @@ export class GameView {
   private readonly missiles: InstancedMesh
   private readonly laser: Mesh
   private readonly laserMat: MeshBasicMaterial
+  private readonly hullMat = new MeshBasicMaterial({ color: 0x7dfff4 })
+  private readonly wingMat = new MeshBasicMaterial({ color: 0xff2bd6 })
+  private readonly bulletMat = new MeshBasicMaterial({ color: 0xfff1a8 })
+  private readonly missileMat = new MeshBasicMaterial({ color: 0xff5a3a })
   private readonly sparks: Spark[] = []
   private readonly sparkGeo: BufferGeometry
   private readonly sparkPos: Float32Array
@@ -99,16 +103,8 @@ export class GameView {
     this.scene.add(this.boss)
     this.scene.add(this.ship)
 
-    this.bullets = new InstancedMesh(
-      new SphereGeometry(1, 8, 6),
-      new MeshBasicMaterial({ color: 0xfff1a8 }),
-      48,
-    )
-    this.missiles = new InstancedMesh(
-      new ConeGeometry(1, 2.4, 6),
-      new MeshBasicMaterial({ color: 0xff5a3a }),
-      8,
-    )
+    this.bullets = new InstancedMesh(new SphereGeometry(1, 8, 6), this.bulletMat, 48)
+    this.missiles = new InstancedMesh(new ConeGeometry(1, 2.4, 6), this.missileMat, 8)
     this.bullets.instanceMatrix.setUsage(DynamicDrawUsage)
     this.missiles.instanceMatrix.setUsage(DynamicDrawUsage)
     this.bullets.frustumCulled = false
@@ -211,7 +207,10 @@ export class GameView {
     this.ship.position.set(shipAt.x, shipAt.y, 1.15)
     this.ship.rotation.z = -lean
     const boosted = fight.boostT > 0
-    this.ship.scale.setScalar(boosted ? 1.18 : 1)
+    const gold = fight.onboarding && fight.slowT > 0
+    this.hullMat.color.setHex(gold ? 0xffd24a : 0x7dfff4)
+    this.wingMat.color.setHex(gold ? 0xffe9a0 : 0xff2bd6)
+    this.ship.scale.setScalar(gold ? 1.28 : boosted ? 1.18 : 1)
     if (fight.mode === 'play' && fight.player.hitInvuln > 0) {
       this.ship.visible = Math.sin(this.clock * 40) > 0
     } else {
@@ -245,6 +244,9 @@ export class GameView {
     let bullet = 0
     let missile = 0
     let laserOn = false
+    let bulletWhite = false
+    let missileWhite = false
+    const gold = fight.onboarding && fight.slowT > 0
     for (const hazard of fight.attacks) {
       if (hazard.type === 'laser') {
         laserOn = true
@@ -252,9 +254,14 @@ export class GameView {
         const thickness = (hazard.width / fight.w) * config.render.worldSpanX
         this.laser.position.set(at.x, 2.2, 0.7)
         this.laser.scale.set(Math.max(0.04, thickness), config.render.worldSpanY * 0.92, 0.08)
-        this.laserMat.opacity = 0.92
-        this.laserMat.color.setHex(0xff4df5)
+        const white = (hazard.whiteT ?? 0) > 0
+        this.laserMat.opacity = white ? 1 : 0.92
+        this.laserMat.color.setHex(white ? 0xffffff : 0xff4df5)
         continue
+      }
+      if ((hazard.whiteT ?? 0) > 0) {
+        if (hazard.kind === 'missile') missileWhite = true
+        else bulletWhite = true
       }
       const at = this.map(hazard.x, hazard.y, fight)
       if (hazard.kind === 'missile' && missile < this.missiles.count) {
@@ -275,7 +282,7 @@ export class GameView {
         bullet += 1
       }
     }
-    if (!laserOn && fight.telegraph?.kinds.includes('laser')) {
+    if (!laserOn && fight.telegraph?.kinds.includes('laser') && fight.telegraph.tutorial !== 'band') {
       laserOn = true
       const fromLeft = fight.laserFromLeft
       const edge = fromLeft ? fight.w * 0.06 : fight.w * 0.94
@@ -286,6 +293,8 @@ export class GameView {
       this.laserMat.color.setHex(0xff9af8)
     }
     this.laser.visible = laserOn
+    this.bulletMat.color.setHex(bulletWhite ? 0xffffff : gold ? 0xffd24a : 0xfff1a8)
+    this.missileMat.color.setHex(missileWhite ? 0xffffff : gold ? 0xffd24a : 0xff5a3a)
     this.hideRest(this.bullets, bullet)
     this.hideRest(this.missiles, missile)
   }
@@ -478,13 +487,9 @@ export class GameView {
   }
 
   private buildShip(): void {
-    const hull = new Mesh(
-      new ConeGeometry(0.22, 0.62, 4),
-      new MeshBasicMaterial({ color: 0x7dfff4 }),
-    )
-    const wingMat = new MeshBasicMaterial({ color: 0xff2bd6 })
-    const left = new Mesh(new BoxGeometry(0.42, 0.08, 0.08), wingMat)
-    const right = new Mesh(new BoxGeometry(0.42, 0.08, 0.08), wingMat)
+    const hull = new Mesh(new ConeGeometry(0.22, 0.62, 4), this.hullMat)
+    const left = new Mesh(new BoxGeometry(0.42, 0.08, 0.08), this.wingMat)
+    const right = new Mesh(new BoxGeometry(0.42, 0.08, 0.08), this.wingMat)
     left.position.set(-0.28, -0.12, 0)
     right.position.set(0.28, -0.12, 0)
     const engine = new Mesh(

@@ -3,7 +3,7 @@ import { config } from './game/config'
 import { createFight, stepFight, type Fight, type FrameInput } from './game/fight'
 import { flickOnRelease, type PointerSample } from './game/input'
 import { rankFor } from './game/rank'
-import { loadSave, recordRun, writeSave, type Save } from './persist'
+import { loadSave, readOnboardingDone, recordRun, writeOnboardingDone, writeSave, type Save } from './persist'
 import { GameView } from './render/view'
 import './style.css'
 
@@ -12,7 +12,14 @@ if (!canvasEl) throw new Error('missing canvas')
 const canvas: HTMLCanvasElement = canvasEl
 
 const flashEl = document.querySelector<HTMLElement>('#flash')
+const bossEl = document.querySelector<HTMLElement>('#boss')
 const bossFill = document.querySelector<HTMLElement>('#boss-fill')
+const tutorialEl = document.querySelector<HTMLElement>('#tutorial')
+const aimLineEl = document.querySelector<HTMLElement>('#aim-line')
+const laserBandEl = document.querySelector<HTMLElement>('#laser-band')
+const haloEl = document.querySelector<HTMLElement>('#gold-halo')
+const fingerEl = document.querySelector<HTMLElement>('#finger')
+const numbersEl = document.querySelector<HTMLElement>('#numbers')
 const muteButton = document.querySelector<HTMLButtonElement>('#mute')
 const pipsEl = document.querySelector<HTMLElement>('#pips')
 const boostEl = document.querySelector<HTMLElement>('#boost')
@@ -25,13 +32,27 @@ const bestEl = document.querySelector<HTMLElement>('#best')
 const view = new GameView(canvas)
 const audio = new AudioEngine()
 let save: Save = loadSave()
+let onboardingSaved = readOnboardingDone(localStorage)
 audio.setMuted(save.muted)
 paintMute()
 
 const fight: Fight = createFight({
   w: window.innerWidth,
   h: window.innerHeight,
+  onboarding: !onboardingSaved,
 })
+
+interface Floater {
+  el: HTMLSpanElement
+  age: number
+  x: number
+  y: number
+}
+
+const floaters: Floater[] = []
+const justDodgeNumber = Math.round(
+  config.justDodge.boostSec * (config.player.boostedDps - config.player.dps),
+)
 
 const pips: HTMLElement[] = []
 for (let i = 0; i < config.player.hitPoints; i++) {
@@ -49,6 +70,8 @@ let tap = false
 let samples: PointerSample[] = []
 let pendingFlick: { speed: number; dirX: number; dirY: number } | null = null
 let settled = false
+let touched = false
+let lastHp = fight.player.hp
 let lastNow = performance.now()
 
 function toSim(clientX: number, clientY: number): { x: number; y: number } {
@@ -62,6 +85,7 @@ function toSim(clientX: number, clientY: number): { x: number; y: number } {
 function onDown(event: PointerEvent): void {
   if (event.target === muteButton) return
   if (pointerId !== null) return
+  touched = true
   audio.unlock()
   pointerId = event.pointerId
   canvas.setPointerCapture(event.pointerId)
@@ -167,6 +191,10 @@ function resize(): void {
       hazard.width *= sx
     }
   }
+  if (fight.telegraph?.aimX !== undefined && fight.telegraph.aimY !== undefined) {
+    fight.telegraph.aimX *= sx
+    fight.telegraph.aimY *= sy
+  }
   view.resize(w, h)
 }
 
@@ -175,10 +203,25 @@ function paintHud(): void {
     const ratio = fight.bossHp / fight.bossMaxHp
     bossFill.style.transform = `scaleX(${Math.max(0, ratio)})`
     bossFill.classList.toggle('enraged', ratio < config.boss.enrageHpFraction)
+    bossFill.classList.toggle('chunk', fight.barPulse > 0)
   }
+  const calm =
+    fight.onboarding && !fight.onboardingDone && fight.time < config.onboarding.calmSec
+  bossEl?.classList.toggle('glow', calm)
+  if (fight.player.hp < lastHp) {
+    const lost = pips[fight.player.hp]
+    if (lost) {
+      lost.style.setProperty('--shatter', `${config.hit.shatterSec}s`)
+      lost.classList.add('shatter')
+    }
+  }
+  if (fight.player.hp > lastHp) {
+    for (const pip of pips) pip.classList.remove('shatter')
+  }
+  lastHp = fight.player.hp
   pips.forEach((pip, index) => {
-    pip.classList.toggle('on', index < fight.player.hp)
-    pip.classList.toggle('hurt', fight.player.hitInvuln > 0)
+    pip.classList.toggle('on', index < fight.player.hp && !pip.classList.contains('shatter'))
+    pip.classList.toggle('hurt', fight.player.hitInvuln > 0 && !pip.classList.contains('shatter'))
   })
   if (boostEl) {
     const on = fight.boostT > 0
@@ -201,6 +244,102 @@ function paintHud(): void {
   }
 }
 
+function paintTutorial(nowMs: number, dt: number, resultJustDodge: boolean): void {
+  const show = fight.onboarding
+  if (tutorialEl) tutorialEl.hidden = !show
+  if (!show) return
+
+  const line = fight.telegraph?.tutorial === 'line' ? fight.telegraph : null
+  if (aimLineEl) {
+    aimLineEl.hidden = !line || line.aimX === undefined || line.aimY === undefined
+    if (line && line.aimX !== undefined && line.aimY !== undefined) {
+      const x1 = line.aimX
+      const y1 = fight.h * config.boss.spawnYFraction
+      const x2 = line.aimX
+      const y2 = line.aimY
+      const dx = x2 - x1
+      const dy = y2 - y1
+      aimLineEl.style.left = `${x1}px`
+      aimLineEl.style.top = `${y1}px`
+      aimLineEl.style.width = `${Math.hypot(dx, dy)}px`
+      aimLineEl.style.height = `${config.onboarding.aimLinePx}px`
+      aimLineEl.style.transform = `rotate(${Math.atan2(dy, dx)}rad)`
+    }
+  }
+
+  const band = fight.telegraph?.tutorial === 'band' ? fight.telegraph : null
+  if (laserBandEl) {
+    laserBandEl.hidden = !band
+    if (band) {
+      const height = fight.h * config.onboarding.bandHeightFraction
+      laserBandEl.style.top = `${fight.h * 0.5 - height / 2}px`
+      laserBandEl.style.height = `${height}px`
+      laserBandEl.classList.toggle('safe-left', band.safeFromLeft === true)
+    }
+  }
+
+  const fingerOn =
+    fight.mode === 'play' &&
+    !fight.onboardingDone &&
+    !touched &&
+    fight.time < config.onboarding.calmSec
+  if (fingerEl) {
+    fingerEl.hidden = !fingerOn
+    if (fingerOn) {
+      const swing = Math.sin((nowMs / 1000) * Math.PI * 2 * config.onboarding.fingerSwingHz)
+      const x =
+        fight.player.x + swing * config.onboarding.fingerAmplitudeWidths * fight.w
+      const y = fight.player.y + fight.h * config.onboarding.fingerBelowShipFraction
+      fingerEl.style.width = `${config.onboarding.fingerSizePx}px`
+      fingerEl.style.left = `${x - config.onboarding.fingerSizePx / 2}px`
+      fingerEl.style.top = `${y}px`
+    }
+  }
+
+  const gold = fight.slowT > 0
+  if (haloEl) {
+    haloEl.hidden = !gold
+    if (gold) {
+      const size = config.onboarding.haloPx
+      haloEl.style.width = `${size}px`
+      haloEl.style.height = `${size}px`
+      haloEl.style.left = `${fight.player.x - size / 2}px`
+      haloEl.style.top = `${fight.player.y - size / 2}px`
+    }
+  }
+
+  if (resultJustDodge && numbersEl) {
+    const el = document.createElement('span')
+    el.textContent = String(justDodgeNumber)
+    el.style.fontSize = `${config.onboarding.damageNumberPx * config.onboarding.damageNumberScale}px`
+    numbersEl.append(el)
+    floaters.push({ el, age: 0, x: fight.player.x, y: fight.player.y })
+  }
+  for (let i = floaters.length - 1; i >= 0; i--) {
+    const floater = floaters[i]
+    if (!floater) continue
+    floater.age += dt
+    const life = config.onboarding.damageNumberLifeSec
+    const fade = Math.max(0, 1 - floater.age / life)
+    floater.el.style.left = `${floater.x}px`
+    floater.el.style.top = `${floater.y - 28 - floater.age * 36}px`
+    floater.el.style.opacity = String(fade)
+    if (floater.age >= life) {
+      floater.el.remove()
+      floaters.splice(i, 1)
+    }
+  }
+}
+
+function rememberOnboarding(): void {
+  if (onboardingSaved || !fight.onboarding) return
+  const finished =
+    fight.onboardingDone || fight.mode === 'dead' || fight.mode === 'clear'
+  if (!finished) return
+  writeOnboardingDone(localStorage)
+  onboardingSaved = true
+}
+
 function frame(now: number): void {
   const rawMs = Math.max(0, now - lastNow)
   const dt = Math.min(config.sim.maxFrameSec, rawMs / 1000)
@@ -216,10 +355,21 @@ function frame(now: number): void {
     audio.update(fight, result, dt)
     view.render(fight, result, dt, rawMs)
     paintHud()
+    paintTutorial(now, dt, result.justDodge)
+    rememberOnboarding()
   }
   const stats = {
     frameMs: view.frameMs.slice(-30),
     quality: view.quality,
+    time: fight.time,
+    mode: fight.mode,
+    onboarding: fight.onboarding,
+    onboardingDone: fight.onboardingDone,
+    slowT: fight.slowT,
+    justDodges: fight.justDodges,
+    tutorial: fight.telegraph?.tutorial ?? null,
+    hp: fight.player.hp,
+    bossHp: fight.bossHp,
   }
   window.__NEON__ = stats
   requestAnimationFrame(frame)
@@ -231,6 +381,18 @@ requestAnimationFrame(frame)
 
 declare global {
   interface Window {
-    __NEON__?: { frameMs: number[]; quality: string }
+    __NEON__?: {
+      frameMs: number[]
+      quality: string
+      time: number
+      mode: string
+      onboarding: boolean
+      onboardingDone: boolean
+      slowT: number
+      justDodges: number
+      tutorial: string | null
+      hp: number
+      bossHp: number
+    }
   }
 }

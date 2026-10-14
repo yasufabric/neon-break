@@ -170,6 +170,20 @@ describe('damage', () => {
     expect(fight.justDodges).toBe(0)
   })
 
+  it('freezes the attack that hit for 0.2s and marks it white', () => {
+    const fight = playing()
+    const bullet = parkBullet(fight)
+    bullet.vy = 80
+    stepFight(fight, IDLE_INPUT, 0.016)
+    const y = bullet.y
+    expect(bullet.frozenT).toBeGreaterThan(config.hit.freezeSec - 0.02)
+    expect(bullet.whiteT).toBeGreaterThan(0)
+    advance(fight, config.hit.freezeSec * 0.5)
+    expect(bullet.y).toBeCloseTo(y)
+    advance(fight, config.hit.freezeSec)
+    expect(bullet.y).toBeGreaterThan(y + 1)
+  })
+
   it('ignores overlaps for 1s after a hit and dies on the third hit', () => {
     const fight = playing()
     parkBullet(fight)

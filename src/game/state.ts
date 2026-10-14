@@ -32,4 +32,12 @@ export interface Fight {
   flashT: number
   sweep: Sweep
   dashEnded: boolean
+  onboarding: boolean
+  onboardingDone: boolean
+  tutorialSlot: number
+  tutorialLaserArmed: boolean
+  tutorialLasersFired: number
+  tutorialShotsFired: number
+  barPulse: number
+  calmChunks: number
 }

@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover"
+    />
+    <meta name="theme-color" content="#07010f" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Neon Break" />
+    <title>ネオンブレイク</title>
+    <link rel="manifest" href="./manifest.webmanifest" />
+    <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="./icon-192.png" />
+  </head>
+  <body>
+    <canvas id="view"></canvas>
+    <div id="flash"></div>
+    <div id="hud">
+      <div id="boss"><div id="boss-fill"></div></div>
+      <button id="mute" type="button" aria-label="Mute">♪</button>
+      <div id="pips"></div>
+      <div id="boost" hidden></div>
+    </div>
+    <section id="result" hidden>
+      <p id="rank"></p>
+      <p id="time"></p>
+      <p id="just"></p>
+      <p id="best"></p>
+    </section>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

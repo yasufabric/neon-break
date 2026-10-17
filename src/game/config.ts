@@ -4,9 +4,8 @@ import type { AttackKind } from './types'
  * Every tunable number for Neon Break.
  * W is the screen width in CSS pixels. Speeds written as widths-per-second
  * scale with the phone. Damage does not: boss HP at 10 DPS is the no-graze
- * clear. Each non-overlapping graze replaces 3s of 10 DPS with 30 DPS
- * (+60 damage, −6s). With HP 1500 that is 150s / 120s / 90s at 0 / 5 / 10 grazes.
- * A drag that keeps grazing clears nearer 60s; one that rarely does, nearer 120s.
+ * clear. Each non-overlapping graze replaces 2.75s of 10 DPS with 30 DPS
+ * (+55 damage, −5.5s). With HP 1100 that is 110s / 82.5s / 55s at 0 / 5 / 10 grazes.
  */
 export const config = {
   reference: {
@@ -37,14 +36,15 @@ export const config = {
   justDodge: {
     slowMoSec: 0.3,
     slowMoScale: 0.35,
-    boostSec: 3,
+    /** 2.75s at 30 DPS is +55 damage, so 0 / 5 / 10 grazes clear in 110s / 82.5s / 55s. */
+    boostSec: 2.75,
     shakeSec: 0.3,
     shakePx: 16,
     hitStopSec: 0.06,
     flashSec: 0.14,
   },
   boss: {
-    hp: 1500,
+    hp: 1100,
     telegraphSec: 0.9,
     gapSec: 1.2,
     enragedGapSec: 0.8,
@@ -81,9 +81,9 @@ export const config = {
     ] as readonly (readonly AttackKind[])[],
   },
   rank: {
-    sMaxClearSec: 75,
+    sMaxClearSec: 65,
     sMaxHits: 0,
-    aMaxClearSec: 120,
+    aMaxClearSec: 90,
   },
   render: {
     maxDpr: 2,

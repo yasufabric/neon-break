@@ -181,8 +181,11 @@ function resolveHits(fight: Fight, result: StepResult): void {
   const sweep = fight.sweep
   for (const hazard of fight.attacks) {
     const touching = overlaps(hazard, sweep, radius)
+    const near = overlaps(hazard, sweep, graze)
+    if (hazard.grazePass && !near) hazard.grazePass = false
     if (touching) {
-      if (hazard.didHit || fight.player.hitInvuln > 0) continue
+      // A graze already claimed this pass, or this bullet already hit. Either way it cannot do the other.
+      if (hazard.didHit || hazard.grazePass || fight.player.hitInvuln > 0) continue
       hazard.didHit = true
       hazard.frozenT = config.hit.freezeSec
       hazard.whiteT = config.hit.freezeSec
@@ -199,8 +202,8 @@ function resolveHits(fight: Fight, result: StepResult): void {
       }
       continue
     }
-    if (hazard.grazeCooldown > 0) continue
-    if (!overlaps(hazard, sweep, graze)) continue
+    if (hazard.didHit || hazard.grazeCooldown > 0 || !near) continue
+    hazard.grazePass = true
     hazard.grazeCooldown = config.graze.cooldownSec
     grantJustDodge(fight)
     result.justDodge = true

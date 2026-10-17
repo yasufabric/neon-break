@@ -53,6 +53,8 @@ export interface BulletHazard {
   homingT: number
   life: number
   grazeCooldown: number
+  /** Set when this bullet grazes, until it leaves the graze radius. Blocks a hit on that pass. */
+  grazePass: boolean
   didHit: boolean
   frozenT?: number
   whiteT?: number
@@ -72,6 +74,8 @@ export interface LaserHazard {
   t: number
   duration: number
   grazeCooldown: number
+  /** Set when this beam grazes, until it leaves the graze radius. Blocks a hit on that pass. */
+  grazePass: boolean
   didHit: boolean
   frozenT?: number
   whiteT?: number

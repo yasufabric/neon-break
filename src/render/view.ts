@@ -27,7 +27,7 @@ import {
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js'
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js'
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js'
-import { config } from '../game/config'
+import { config, hitboxRadius } from '../game/config'
 import type { Fight } from '../game/fight'
 import { nextQuality, particleCap, type Quality } from '../game/quality'
 import type { StepResult } from '../game/types'
@@ -62,8 +62,7 @@ export class GameView {
   private readonly eyeMat: MeshBasicMaterial
   private readonly podMat: MeshBasicMaterial
   private readonly ship = new Group()
-  private readonly ghosts: Mesh[] = []
-  private readonly ghostPos: { x: number; y: number }[] = []
+  private readonly hitboxDot: Mesh
   private readonly bullets: InstancedMesh
   private readonly missiles: InstancedMesh
   private readonly laser: Mesh
@@ -100,8 +99,17 @@ export class GameView {
     this.podMat = new MeshBasicMaterial({ color: 0x241028 })
     this.buildBoss()
     this.buildShip()
+    const dotMat = new MeshBasicMaterial({
+      color: 0xffffff,
+      blending: AdditiveBlending,
+      depthWrite: false,
+      toneMapped: false,
+    })
+    dotMat.color.setRGB(1.5, 2.4, 2.6)
+    this.hitboxDot = new Mesh(new SphereGeometry(1, 12, 8), dotMat)
     this.scene.add(this.boss)
     this.scene.add(this.ship)
+    this.scene.add(this.hitboxDot)
 
     this.bullets = new InstancedMesh(new SphereGeometry(1, 8, 6), this.bulletMat, 48)
     this.missiles = new InstancedMesh(new ConeGeometry(1, 2.4, 6), this.missileMat, 8)
@@ -203,11 +211,10 @@ export class GameView {
     this.podMat.color.set(kinds.includes('missile') ? 0xff5a2a : 0x241028)
 
     const shipAt = this.map(fight.player.x, fight.player.y, fight)
-    const lean = fight.player.dashT > 0 ? fight.player.dashDirX * 0.5 : 0
     this.ship.position.set(shipAt.x, shipAt.y, 1.15)
-    this.ship.rotation.z = -lean
+    this.ship.rotation.z = 0
     const boosted = fight.boostT > 0
-    const gold = fight.onboarding && fight.slowT > 0
+    const gold = fight.slowT > 0
     this.hullMat.color.setHex(gold ? 0xffd24a : 0x7dfff4)
     this.wingMat.color.setHex(gold ? 0xffe9a0 : 0xff2bd6)
     this.ship.scale.setScalar(gold ? 1.28 : boosted ? 1.18 : 1)
@@ -216,17 +223,13 @@ export class GameView {
     } else {
       this.ship.visible = fight.mode !== 'dead'
     }
-
-    this.ghostPos.unshift({ x: shipAt.x, y: shipAt.y })
-    if (this.ghostPos.length > this.ghosts.length) this.ghostPos.pop()
-    this.ghosts.forEach((ghost, index) => {
-      const pos = this.ghostPos[index]
-      ghost.visible = fight.player.dashT > 0 && !!pos
-      if (!pos) return
-      ghost.position.set(pos.x, pos.y, 1.05)
-      const mat = ghost.material
-      if (mat instanceof MeshBasicMaterial) mat.opacity = 0.28 - index * 0.08
-    })
+    const dotRadius =
+      (hitboxRadius(fight.w) / fight.w) *
+      config.render.worldSpanX *
+      config.render.hitboxDotFraction
+    this.hitboxDot.position.set(shipAt.x, shipAt.y, 1.5)
+    this.hitboxDot.scale.setScalar(Math.max(0.02, dotRadius))
+    this.hitboxDot.visible = fight.mode !== 'dead'
 
     if (fight.mode === 'play') {
       this.muzzle -= dt
@@ -246,14 +249,15 @@ export class GameView {
     let laserOn = false
     let bulletWhite = false
     let missileWhite = false
-    const gold = fight.onboarding && fight.slowT > 0
+    const gold = fight.slowT > 0
     for (const hazard of fight.attacks) {
       if (hazard.type === 'laser') {
         laserOn = true
-        const at = this.map(hazard.x, fight.h * 0.5, fight)
+        const at = this.map(hazard.x, hazard.y, fight)
         const thickness = (hazard.width / fight.w) * config.render.worldSpanX
-        this.laser.position.set(at.x, 2.2, 0.7)
-        this.laser.scale.set(Math.max(0.04, thickness), config.render.worldSpanY * 0.92, 0.08)
+        const tall = (hazard.height / fight.h) * config.render.worldSpanY
+        this.laser.position.set(at.x, at.y, 0.7)
+        this.laser.scale.set(Math.max(0.04, thickness), Math.max(0.08, tall), 0.08)
         const white = (hazard.whiteT ?? 0) > 0
         this.laserMat.opacity = white ? 1 : 0.92
         this.laserMat.color.setHex(white ? 0xffffff : 0xff4df5)
@@ -286,9 +290,10 @@ export class GameView {
       laserOn = true
       const fromLeft = fight.laserFromLeft
       const edge = fromLeft ? fight.w * 0.06 : fight.w * 0.94
-      const at = this.map(edge, fight.h * 0.5, fight)
-      this.laser.position.set(at.x, 2.2, 0.7)
-      this.laser.scale.set(0.06, config.render.worldSpanY * 0.92, 0.04)
+      const at = this.map(edge, fight.h * config.boss.laserCenterFraction, fight)
+      const tall = config.boss.laserHeightFraction * config.render.worldSpanY
+      this.laser.position.set(at.x, at.y, 0.7)
+      this.laser.scale.set(0.06, Math.max(0.08, tall), 0.04)
       this.laserMat.opacity = 0.35 + Math.sin(this.clock * 24) * 0.2
       this.laserMat.color.setHex(0xff9af8)
     }
@@ -498,19 +503,5 @@ export class GameView {
     )
     engine.position.y = -0.32
     this.ship.add(hull, left, right, engine)
-    for (let i = 0; i < 3; i++) {
-      const ghost = new Mesh(
-        new ConeGeometry(0.22, 0.62, 4),
-        new MeshBasicMaterial({
-          color: 0x7dfff4,
-          transparent: true,
-          opacity: 0.2,
-          depthWrite: false,
-        }),
-      )
-      ghost.visible = false
-      this.ghosts.push(ghost)
-      this.scene.add(ghost)
-    }
   }
 }

@@ -74,7 +74,6 @@ export class AudioEngine {
         this.shotWait = config.render.muzzleSec
       }
     }
-    if (result.dashed) this.noise(0.09, 1400, 0.08)
     if (result.justDodge) {
       this.blip(880, 0.08, 0.16)
       this.blip(1320, 0.12, 0.1)

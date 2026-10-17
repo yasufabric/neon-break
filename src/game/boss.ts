@@ -1,4 +1,4 @@
-import { config } from './config'
+import { config, projectileSpeed } from './config'
 import { onboardingPhase } from './onboarding'
 import type { Fight } from './state'
 import type { AttackKind, BulletHazard, Hazard, LaserHazard, Phase } from './types'
@@ -173,7 +173,8 @@ function updateLaserTutorial(fight: Fight, worldDt: number): AttackKind[] | null
 
 function spawnTutorialStraight(fight: Fight, aimX: number, aimY: number): void {
   const speed =
-    config.boss.straightSpeedWidthsPerSec * fight.w * config.onboarding.bulletSpeedScale
+    projectileSpeed(fight.w, config.boss.straightSpeedWidthsPerSec) *
+    config.onboarding.bulletSpeedScale
   const y = fight.h * config.boss.spawnYFraction
   const dy = aimY - y
   const len = Math.abs(dy) || 1
@@ -191,7 +192,7 @@ function spawnTutorialStraight(fight: Fight, aimX: number, aimY: number): void {
     r,
     homingT: 0,
     life: config.boss.bulletLifeSec,
-    justDodgeDashId: 0,
+    grazeCooldown: 0,
     didHit: false,
   })
 }
@@ -220,7 +221,7 @@ function spawnStraight(fight: Fight): void {
   const spread = config.boss.straightSpreadWidths * fight.w
   const step = count > 1 ? spread / (count - 1) : 0
   const origin = fight.player.x - spread / 2
-  const speed = config.boss.straightSpeedWidthsPerSec * fight.w
+  const speed = projectileSpeed(fight.w, config.boss.straightSpeedWidthsPerSec)
   const y = fight.h * config.boss.spawnYFraction
   const r = config.boss.straightRadiusWidths * fight.w
   for (let i = 0; i < count; i++) {
@@ -237,7 +238,7 @@ function spawnStraight(fight: Fight): void {
       r,
       homingT: 0,
       life: config.boss.bulletLifeSec,
-      justDodgeDashId: 0,
+      grazeCooldown: 0,
       didHit: false,
     })
   }
@@ -257,11 +258,12 @@ function spawnLaser(fight: Fight): void {
     px: x0,
     x0,
     x1,
-    y: fight.h * 0.5,
+    y: fight.h * config.boss.laserCenterFraction,
     width,
+    height: fight.h * config.boss.laserHeightFraction,
     t: 0,
     duration: config.boss.laserSweepSec,
-    justDodgeDashId: 0,
+    grazeCooldown: 0,
     didHit: false,
   }
   fight.attacks.push(laser)
@@ -269,7 +271,7 @@ function spawnLaser(fight: Fight): void {
 
 function spawnMissiles(fight: Fight): void {
   const y = fight.h * config.boss.spawnYFraction
-  const speed = config.boss.missileSpeedWidthsPerSec * fight.w
+  const speed = projectileSpeed(fight.w, config.boss.missileSpeedWidthsPerSec)
   const r = config.boss.missileRadiusWidths * fight.w
   const count = config.boss.missileCount
   for (let i = 0; i < count; i++) {
@@ -290,7 +292,7 @@ function spawnMissiles(fight: Fight): void {
       r,
       homingT: config.boss.missileHomingSec,
       life: config.boss.missileLifeSec,
-      justDodgeDashId: 0,
+      grazeCooldown: 0,
       didHit: false,
     }
     fight.attacks.push(missile)
@@ -337,7 +339,7 @@ function steerMissile(fight: Fight, missile: BulletHazard, worldDt: number): voi
   const dx = fight.player.x - missile.x
   const dy = fight.player.y - missile.y
   const len = Math.hypot(dx, dy) || 1
-  const speed = config.boss.missileSpeedWidthsPerSec * fight.w
+  const speed = projectileSpeed(fight.w, config.boss.missileSpeedWidthsPerSec)
   const desiredX = (dx / len) * speed
   const desiredY = (dy / len) * speed
   const blend = 1 - Math.exp(-config.boss.missileTurn * worldDt)
@@ -346,7 +348,7 @@ function steerMissile(fight: Fight, missile: BulletHazard, worldDt: number): voi
   missile.homingT -= worldDt
   if (missile.homingT <= 0) {
     const v = Math.hypot(missile.vx, missile.vy) || 1
-    const boost = config.boss.missileBoostSpeedWidthsPerSec * fight.w
+    const boost = projectileSpeed(fight.w, config.boss.missileBoostSpeedWidthsPerSec)
     missile.vx = (missile.vx / v) * boost
     missile.vy = (missile.vy / v) * boost
     missile.homingT = 0

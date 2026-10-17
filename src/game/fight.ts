@@ -1,4 +1,4 @@
-import { config, dashDistance, hitboxRadius, maxSpeed } from './config'
+import { config, hitboxRadius } from './config'
 import { gapSeconds, moveHazards, openTelegraph, updateSchedule } from './boss'
 import type { Fight } from './state'
 import type { FrameInput, Hazard, StepResult, Sweep } from './types'
@@ -8,12 +8,8 @@ export type { FrameInput, Hazard, Mode, StepResult, Sweep } from './types'
 
 export const IDLE_INPUT: FrameInput = {
   dragging: false,
-  dragX: 0,
-  dragY: 0,
-  released: false,
-  releaseSpeed: 0,
-  releaseDirX: 1,
-  releaseDirY: 0,
+  fingerX: 0,
+  fingerY: 0,
   tap: false,
 }
 
@@ -44,13 +40,6 @@ export function createFight(options: CreateOptions): Fight {
       hp: config.player.hitPoints,
       hits: 0,
       hitInvuln: 0,
-      dashT: 0,
-      dashCooldown: 0,
-      dashDirX: 1,
-      dashDirY: 0,
-      dashId: 0,
-      dashJustDodged: false,
-      dashesStarted: 0,
     },
     attacks: [],
     telegraph: null,
@@ -66,8 +55,7 @@ export function createFight(options: CreateOptions): Fight {
     shakeT: 0,
     hitStopT: 0,
     flashT: 0,
-    sweep: { x0: 0, y0: 0, x1: 0, y1: 0, dashing: false },
-    dashEnded: false,
+    sweep: { x0: 0, y0: 0, x1: 0, y1: 0 },
     onboarding: options.onboarding === true,
     onboardingDone: false,
     tutorialSlot: 0,
@@ -102,7 +90,6 @@ export function emptyResult(): StepResult {
   return {
     started: false,
     retried: false,
-    dashed: false,
     justDodge: false,
     hit: false,
     died: false,
@@ -125,7 +112,7 @@ export function stepFight(fight: Fight, input: FrameInput, realDt: number): Step
   }
 
   if (fight.mode === 'ready') {
-    const engaged = input.tap || input.dragging || input.released
+    const engaged = input.tap || input.dragging
     if (!engaged) return result
     fight.mode = 'play'
     result.started = true
@@ -147,13 +134,12 @@ export function stepFight(fight: Fight, input: FrameInput, realDt: number): Step
   const worldScale = fight.slowT > 0 ? config.justDodge.slowMoScale : 1
   const worldDt = dt * worldScale
 
-  updatePlayer(fight, input, dt, result)
+  updatePlayer(fight, input)
   const fired = updateSchedule(fight, worldDt)
   if (fired) result.fired = fired
   decayLocks(fight, dt)
   moveHazards(fight, worldDt)
   resolveHits(fight, result)
-  finishDash(fight)
   decayJuice(fight, dt)
   if (fight.player.hitInvuln > 0) {
     fight.player.hitInvuln = Math.max(0, fight.player.hitInvuln - dt)
@@ -162,7 +148,7 @@ export function stepFight(fight: Fight, input: FrameInput, realDt: number): Step
   return result
 }
 
-/** The just-dodge payoff: slow-mo, then a full boost window, cooldown cleared. */
+/** Graze payoff: slow-mo, then a full boost window. */
 export function grantJustDodge(fight: Fight): void {
   fight.justDodges += 1
   fight.slowT = config.justDodge.slowMoSec
@@ -171,164 +157,68 @@ export function grantJustDodge(fight: Fight): void {
   fight.shakeT = config.justDodge.shakeSec
   fight.hitStopT = config.justDodge.hitStopSec
   fight.flashT = config.justDodge.flashSec
-  fight.player.dashCooldown = config.dash.justDodgeCooldownSec
-  fight.player.dashJustDodged = true
 }
 
-function updatePlayer(fight: Fight, input: FrameInput, dt: number, result: StepResult): void {
+function updatePlayer(fight: Fight, input: FrameInput): void {
   const player = fight.player
-  if (player.dashCooldown > 0) {
-    player.dashCooldown = Math.max(0, player.dashCooldown - dt)
-  }
-
-  const wantsDash =
-    player.dashT <= 0 &&
-    player.dashCooldown <= 0 &&
-    input.released &&
-    input.releaseSpeed > config.dash.flickSpeedWidthsPerSec * fight.w
-
-  if (wantsDash) beginDash(fight, input.releaseDirX, input.releaseDirY, result)
-
   fight.sweep = {
     x0: player.x,
     y0: player.y,
     x1: player.x,
     y1: player.y,
-    dashing: false,
   }
-
-  if (player.dashT > 0) {
-    const speed = dashDistance(fight.w) / config.dash.durationSec
-    const step = Math.min(dt, player.dashT)
-    player.x += player.dashDirX * speed * step
-    player.y += player.dashDirY * speed * step
-    player.dashT -= step
-    clampPlayer(fight)
-    fight.sweep = {
-      x0: fight.sweep.x0,
-      y0: fight.sweep.y0,
-      x1: player.x,
-      y1: player.y,
-      dashing: true,
-    }
-    if (player.dashT <= 1e-8) {
-      player.dashT = 0
-      fight.dashEnded = true
-    }
-    return
-  }
-
-  if (input.dragging) {
-    let dx = input.dragX
-    let dy = input.dragY
-    const len = Math.hypot(dx, dy)
-    const cap = maxSpeed(fight.w) * dt
-    if (len > cap && len > 0) {
-      dx *= cap / len
-      dy *= cap / len
-    }
-    player.x += dx
-    player.y += dy
-    clampPlayer(fight)
-    fight.sweep = {
-      x0: fight.sweep.x0,
-      y0: fight.sweep.y0,
-      x1: player.x,
-      y1: player.y,
-      dashing: false,
-    }
-  }
-}
-
-function beginDash(fight: Fight, dirX: number, dirY: number, result: StepResult): void {
-  const len = Math.hypot(dirX, dirY) || 1
-  const player = fight.player
-  player.dashDirX = dirX / len
-  player.dashDirY = dirY / len
-  player.dashT = config.dash.durationSec
-  player.dashId += 1
-  player.dashJustDodged = false
-  player.dashesStarted += 1
-  result.dashed = true
-}
-
-function finishDash(fight: Fight): void {
-  if (!fight.dashEnded) return
-  fight.dashEnded = false
-  if (!fight.player.dashJustDodged) {
-    fight.player.dashCooldown = config.dash.cooldownSec
-  }
+  if (!input.dragging) return
+  player.x = input.fingerX
+  player.y = input.fingerY - config.player.hoverWidths * fight.w
+  clampPlayer(fight)
+  fight.sweep.x1 = player.x
+  fight.sweep.y1 = player.y
 }
 
 function resolveHits(fight: Fight, result: StepResult): void {
   const radius = hitboxRadius(fight.w)
+  const graze = radius * config.graze.radiusScale
   const sweep = fight.sweep
   for (const hazard of fight.attacks) {
     const touching = overlaps(hazard, sweep, radius)
-    const grazing = !touching && tutorialFlickGraze(fight, hazard, sweep)
-    if (!touching && !grazing) continue
-    if (sweep.dashing) {
-      if (hazard.justDodgeDashId !== fight.player.dashId) {
-        hazard.justDodgeDashId = fight.player.dashId
-        grantJustDodge(fight)
-        result.justDodge = true
+    if (touching) {
+      if (hazard.didHit || fight.player.hitInvuln > 0) continue
+      hazard.didHit = true
+      hazard.frozenT = config.hit.freezeSec
+      hazard.whiteT = config.hit.freezeSec
+      fight.player.hp -= 1
+      fight.player.hits += 1
+      fight.player.hitInvuln = config.player.hitInvulnSec
+      fight.shakeT = Math.max(fight.shakeT, config.justDodge.shakeSec * 0.7)
+      result.hit = true
+      if (fight.player.hp <= 0) {
+        fight.player.hp = 0
+        fight.mode = 'dead'
+        result.died = true
+        return
       }
       continue
     }
-    if (hazard.didHit || fight.player.hitInvuln > 0) continue
-    hazard.didHit = true
-    hazard.frozenT = config.hit.freezeSec
-    hazard.whiteT = config.hit.freezeSec
-    fight.player.hp -= 1
-    fight.player.hits += 1
-    fight.player.hitInvuln = config.player.hitInvulnSec
-    fight.shakeT = Math.max(fight.shakeT, config.justDodge.shakeSec * 0.7)
-    result.hit = true
-    if (fight.player.hp <= 0) {
-      fight.player.hp = 0
-      fight.mode = 'dead'
-      result.died = true
-      return
-    }
+    if (hazard.grazeCooldown > 0) continue
+    if (!overlaps(hazard, sweep, graze)) continue
+    hazard.grazeCooldown = config.graze.cooldownSec
+    grantJustDodge(fight)
+    result.justDodge = true
   }
-}
-
-/** A late sideways flick past an aimed tutorial shot, before the circles meet. */
-function tutorialFlickGraze(fight: Fight, hazard: Hazard, sweep: Sweep): boolean {
-  if (!sweep.dashing || !fight.onboarding || fight.onboardingDone) return false
-  if (hazard.type !== 'bullet' || hazard.kind !== 'straight') return false
-  const graze = config.onboarding.flickGrazeWidths * fight.w
-  return pointSegmentDistance(sweep.x0, sweep.y0, hazard.px, hazard.py, hazard.x, hazard.y) <= graze
-}
-
-function pointSegmentDistance(
-  px: number,
-  py: number,
-  ax: number,
-  ay: number,
-  bx: number,
-  by: number,
-): number {
-  const abx = bx - ax
-  const aby = by - ay
-  const apx = px - ax
-  const apy = py - ay
-  const ab2 = abx * abx + aby * aby
-  const t = ab2 <= 1e-12 ? 0 : Math.max(0, Math.min(1, (apx * abx + apy * aby) / ab2))
-  const dx = ax + abx * t - px
-  const dy = ay + aby * t - py
-  return Math.hypot(dx, dy)
 }
 
 function overlaps(hazard: Hazard, sweep: Sweep, radius: number): boolean {
   if (hazard.type === 'laser') {
-    return rangesMeet(
-      sweep.x0,
-      sweep.x1,
-      hazard.px,
-      hazard.x,
-      radius + hazard.width / 2,
-    )
+    const yReach = radius + hazard.height / 2
+    const y0 = sweep.y0 - hazard.y
+    const y1 = sweep.y1 - hazard.y
+    const yHits =
+      Math.abs(y0) <= yReach ||
+      Math.abs(y1) <= yReach ||
+      (y0 > 0 && y1 < 0) ||
+      (y0 < 0 && y1 > 0)
+    if (!yHits) return false
+    return rangesMeet(sweep.x0, sweep.x1, hazard.px, hazard.x, radius + hazard.width / 2)
   }
   return segmentsClose(
     sweep.x0,
@@ -435,6 +325,9 @@ function clampPlayer(fight: Fight): void {
 
 function decayLocks(fight: Fight, dt: number): void {
   for (const hazard of fight.attacks) {
+    if (hazard.grazeCooldown > 0) {
+      hazard.grazeCooldown = Math.max(0, hazard.grazeCooldown - dt)
+    }
     if (hazard.frozenT !== undefined && hazard.frozenT > 0) {
       hazard.frozenT = Math.max(0, hazard.frozenT - dt)
     }
@@ -525,7 +418,6 @@ function mergeResult(a: StepResult, b: StepResult): StepResult {
   return {
     started: a.started || b.started,
     retried: a.retried || b.retried,
-    dashed: a.dashed || b.dashed,
     justDodge: a.justDodge || b.justDodge,
     hit: a.hit || b.hit,
     died: a.died || b.died,

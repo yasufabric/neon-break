@@ -31,7 +31,6 @@ export interface Fight {
   hitStopT: number
   flashT: number
   sweep: Sweep
-  dashEnded: boolean
   onboarding: boolean
   onboardingDone: boolean
   tutorialSlot: number

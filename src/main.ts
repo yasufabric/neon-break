@@ -1,7 +1,6 @@
 import { AudioEngine } from './audio/engine'
 import { config } from './game/config'
 import { createFight, stepFight, type Fight, type FrameInput } from './game/fight'
-import { flickOnRelease, type PointerSample } from './game/input'
 import { rankFor } from './game/rank'
 import { loadSave, readOnboardingDone, recordRun, writeOnboardingDone, writeSave, type Save } from './persist'
 import { GameView } from './render/view'
@@ -62,13 +61,9 @@ for (let i = 0; i < config.player.hitPoints; i++) {
 }
 
 let pointerId: number | null = null
-let lastX = 0
-let lastY = 0
-let dragX = 0
-let dragY = 0
+let fingerX = 0
+let fingerY = 0
 let tap = false
-let samples: PointerSample[] = []
-let pendingFlick: { speed: number; dirX: number; dirY: number } | null = null
 let settled = false
 let touched = false
 let lastHp = fight.player.hp
@@ -90,36 +85,24 @@ function onDown(event: PointerEvent): void {
   pointerId = event.pointerId
   canvas.setPointerCapture(event.pointerId)
   const point = toSim(event.clientX, event.clientY)
-  lastX = point.x
-  lastY = point.y
-  const now = performance.now() / 1000
-  samples = [{ x: point.x, y: point.y, t: now }]
+  fingerX = point.x
+  fingerY = point.y
   tap = true
 }
 
 function onMove(event: PointerEvent): void {
   if (event.pointerId !== pointerId) return
   const point = toSim(event.clientX, event.clientY)
-  dragX += point.x - lastX
-  dragY += point.y - lastY
-  lastX = point.x
-  lastY = point.y
-  const now = performance.now() / 1000
-  samples.push({ x: point.x, y: point.y, t: now })
-  const cutoff = now - 0.2
-  while (samples.length > 2 && samples[0]!.t < cutoff) samples.shift()
+  fingerX = point.x
+  fingerY = point.y
 }
 
 function onUp(event: PointerEvent): void {
   if (event.pointerId !== pointerId) return
   const point = toSim(event.clientX, event.clientY)
-  dragX += point.x - lastX
-  dragY += point.y - lastY
-  const now = performance.now() / 1000
-  const flick = flickOnRelease(samples, point.x, point.y, now, fight.w)
-  if (flick.dash) pendingFlick = flick
+  fingerX = point.x
+  fingerY = point.y
   pointerId = null
-  samples = []
 }
 
 canvas.addEventListener('pointerdown', onDown)
@@ -151,19 +134,12 @@ function paintMute(): void {
 
 function consumeInput(): FrameInput {
   const input: FrameInput = {
-    dragging: pointerId !== null || dragX !== 0 || dragY !== 0,
-    dragX,
-    dragY,
-    released: pendingFlick !== null,
-    releaseSpeed: pendingFlick?.speed ?? 0,
-    releaseDirX: pendingFlick?.dirX ?? 1,
-    releaseDirY: pendingFlick?.dirY ?? 0,
+    dragging: pointerId !== null,
+    fingerX,
+    fingerY,
     tap,
   }
-  dragX = 0
-  dragY = 0
   tap = false
-  pendingFlick = null
   return input
 }
 
@@ -245,11 +221,10 @@ function paintHud(): void {
 }
 
 function paintTutorial(nowMs: number, dt: number, resultJustDodge: boolean): void {
+  if (tutorialEl) tutorialEl.hidden = false
   const show = fight.onboarding
-  if (tutorialEl) tutorialEl.hidden = !show
-  if (!show) return
 
-  const line = fight.telegraph?.tutorial === 'line' ? fight.telegraph : null
+  const line = show && fight.telegraph?.tutorial === 'line' ? fight.telegraph : null
   if (aimLineEl) {
     aimLineEl.hidden = !line || line.aimX === undefined || line.aimY === undefined
     if (line && line.aimX !== undefined && line.aimY !== undefined) {
@@ -267,7 +242,7 @@ function paintTutorial(nowMs: number, dt: number, resultJustDodge: boolean): voi
     }
   }
 
-  const band = fight.telegraph?.tutorial === 'band' ? fight.telegraph : null
+  const band = show && fight.telegraph?.tutorial === 'band' ? fight.telegraph : null
   if (laserBandEl) {
     laserBandEl.hidden = !band
     if (band) {
@@ -279,6 +254,7 @@ function paintTutorial(nowMs: number, dt: number, resultJustDodge: boolean): voi
   }
 
   const fingerOn =
+    show &&
     fight.mode === 'play' &&
     !fight.onboardingDone &&
     !touched &&
@@ -289,7 +265,7 @@ function paintTutorial(nowMs: number, dt: number, resultJustDodge: boolean): voi
       const swing = Math.sin((nowMs / 1000) * Math.PI * 2 * config.onboarding.fingerSwingHz)
       const x =
         fight.player.x + swing * config.onboarding.fingerAmplitudeWidths * fight.w
-      const y = fight.player.y + fight.h * config.onboarding.fingerBelowShipFraction
+      const y = fight.player.y + config.player.hoverWidths * fight.w
       fingerEl.style.width = `${config.onboarding.fingerSizePx}px`
       fingerEl.style.left = `${x - config.onboarding.fingerSizePx / 2}px`
       fingerEl.style.top = `${y}px`

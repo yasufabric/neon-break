@@ -6,12 +6,9 @@ export type Phase = 1 | 2
 
 export interface FrameInput {
   dragging: boolean
-  dragX: number
-  dragY: number
-  released: boolean
-  releaseSpeed: number
-  releaseDirX: number
-  releaseDirY: number
+  /** Sim-space finger position. The ship uses it only while dragging. */
+  fingerX: number
+  fingerY: number
   tap: boolean
 }
 
@@ -20,7 +17,6 @@ export interface Sweep {
   y0: number
   x1: number
   y1: number
-  dashing: boolean
 }
 
 export interface PlayerState {
@@ -29,13 +25,6 @@ export interface PlayerState {
   hp: number
   hits: number
   hitInvuln: number
-  dashT: number
-  dashCooldown: number
-  dashDirX: number
-  dashDirY: number
-  dashId: number
-  dashJustDodged: boolean
-  dashesStarted: number
 }
 
 export type TutorialCue = 'line' | 'band'
@@ -63,7 +52,7 @@ export interface BulletHazard {
   r: number
   homingT: number
   life: number
-  justDodgeDashId: number
+  grazeCooldown: number
   didHit: boolean
   frozenT?: number
   whiteT?: number
@@ -79,9 +68,10 @@ export interface LaserHazard {
   x1: number
   y: number
   width: number
+  height: number
   t: number
   duration: number
-  justDodgeDashId: number
+  grazeCooldown: number
   didHit: boolean
   frozenT?: number
   whiteT?: number
@@ -92,7 +82,6 @@ export type Hazard = BulletHazard | LaserHazard
 export interface StepResult {
   started: boolean
   retried: boolean
-  dashed: boolean
   justDodge: boolean
   hit: boolean
   died: boolean

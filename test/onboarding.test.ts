@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { config, flickThreshold, hitboxRadius } from '../src/game/config'
+import { config, grazeRadius, hitboxRadius } from '../src/game/config'
 import { createFight, IDLE_INPUT, stepFight, type Fight, type FrameInput } from '../src/game/fight'
 import { tutorialStraightStarts } from '../src/game/onboarding'
 import { readOnboardingDone, writeOnboardingDone, type KeyValue } from '../src/persist'
@@ -31,12 +31,12 @@ function step(fight: Fight, input: FrameInput = IDLE_INPUT): void {
   stepFight(fight, input, config.sim.maxFrameSec)
 }
 
-function release(): FrameInput {
+function dragShip(fight: Fight, x: number, y: number): FrameInput {
   return {
-    ...IDLE_INPUT,
-    released: true,
-    releaseSpeed: flickThreshold(config.reference.width) + 40,
-    releaseDirX: 1,
+    dragging: true,
+    fingerX: x,
+    fingerY: y + config.player.hoverWidths * fight.w,
+    tap: false,
   }
 }
 
@@ -48,7 +48,7 @@ function parkOffTheLine(fight: Fight): void {
   if (fight.telegraph?.tutorial === 'line' && fight.telegraph.aimX !== undefined) {
     unsafe.push(fight.telegraph.aimX)
   }
-  const radius = hitboxRadius(fight.w) + config.boss.straightRadiusWidths * fight.w + 12
+  const radius = grazeRadius(fight.w) + config.boss.straightRadiusWidths * fight.w + 18
   const options = [0.18, 0.5, 0.82].map((fraction) => fight.w * fraction)
   const next = options.find((x) => unsafe.every((column) => Math.abs(column - x) > radius))
   if (next !== undefined) fight.player.x = next
@@ -96,7 +96,10 @@ describe('onboarding timeline', () => {
     if (shot && shot.type === 'bullet') {
       const speed = Math.hypot(shot.vx, shot.vy)
       expect(speed).toBeCloseTo(
-        config.boss.straightSpeedWidthsPerSec * fight.w * config.onboarding.bulletSpeedScale,
+        config.boss.straightSpeedWidthsPerSec *
+          config.boss.projectileSpeedScale *
+          fight.w *
+          config.onboarding.bulletSpeedScale,
         4,
       )
     }
@@ -116,47 +119,46 @@ describe('onboarding timeline', () => {
     expect(fight.bossHp / fight.bossMaxHp).toBeGreaterThan(config.boss.enrageHpFraction)
   })
 
-  it('lets a last-moment flick just-dodge the aimed tutorial shot', () => {
+  it('grazes an aimed tutorial shot when the drag skims it', () => {
     const fight = firstRun()
-    const radius = hitboxRadius(fight.w)
-    const graze = config.onboarding.flickGrazeWidths * fight.w
     let guard = 0
-    while (guard++ < 60 * 30) {
+    while (guard++ < 60 * 40) {
       const bullet = fight.attacks.find(
         (hazard): hazard is BulletHazard => hazard.type === 'bullet' && hazard.kind === 'straight',
       )
-      if (bullet) {
-        const dist = Math.hypot(bullet.x - fight.player.x, bullet.y - fight.player.y)
-        const touch = radius + bullet.r
-        if (dist <= graze && dist > touch + graze * 0.35) {
-          step(fight, release())
-          expect(fight.justDodges).toBe(1)
-          expect(fight.player.hp).toBe(config.player.hitPoints)
-          expect(dist).toBeGreaterThan(touch)
-          expect(fight.slowT).toBeGreaterThan(config.justDodge.slowMoSec - config.sim.maxFrameSec - 0.001)
-          return
+      if (bullet && bullet.y > fight.h * 0.35) {
+        const touch = hitboxRadius(fight.w) + bullet.r
+        const outer = grazeRadius(fight.w) + bullet.r
+        const x = bullet.x + (touch + outer) / 2
+        step(fight, dragShip(fight, x, fight.player.y))
+        expect(fight.player.hp).toBe(config.player.hitPoints)
+        let passed = 0
+        while (passed++ < 400 && fight.justDodges === 0 && fight.player.hp === config.player.hitPoints) {
+          step(fight, dragShip(fight, x, fight.player.y))
         }
+        expect(fight.justDodges).toBe(1)
+        expect(fight.player.hp).toBe(config.player.hitPoints)
+        expect(fight.slowT).toBeGreaterThan(0)
+        return
       }
       step(fight)
-      if (fight.player.hp < config.player.hitPoints) {
-        throw new Error(`hit before the flick at t=${fight.time.toFixed(2)}`)
-      }
     }
-    throw new Error('tutorial bullet never reached the ship')
+    throw new Error('tutorial bullet never appeared')
   })
 
-  it('does not count a flick while the aimed shot is still far away', () => {
+  it('does not graze while the aimed shot is still far from the ship', () => {
     const fight = firstRun()
-    const graze = config.onboarding.flickGrazeWidths * fight.w
     let guard = 0
-    while (guard++ < 60 * 30) {
+    while (guard++ < 60 * 40) {
       const bullet = fight.attacks.find(
         (hazard): hazard is BulletHazard => hazard.type === 'bullet' && hazard.kind === 'straight',
       )
       if (bullet) {
-        const dist = Math.hypot(bullet.x - fight.player.x, bullet.y - fight.player.y)
-        if (dist < graze * 2.2 && dist > graze * 1.6) {
-          step(fight, release())
+        const dist = Math.abs(bullet.y - fight.player.y)
+        const outer = grazeRadius(fight.w) + bullet.r
+        if (dist > outer * 3) {
+          const x = bullet.x + (hitboxRadius(fight.w) + grazeRadius(fight.w)) / 2 + bullet.r
+          step(fight, dragShip(fight, x, fight.player.y))
           expect(fight.justDodges).toBe(0)
           expect(fight.player.hp).toBe(config.player.hitPoints)
           return
@@ -164,7 +166,7 @@ describe('onboarding timeline', () => {
       }
       step(fight)
     }
-    throw new Error('tutorial bullet never entered the early window')
+    throw new Error('tutorial bullet never appeared')
   })
 })
 

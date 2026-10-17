@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { runBlindDashBot } from '../src/game/bot'
+import { runFrequentGrazeBot, runNoGrazeBot, runRandomDragBot } from '../src/game/bot'
 import { simulateClearTime } from '../src/game/clear-sim'
 import {
   config,
-  dashDistance,
   expectedClearSeconds,
-  flickThreshold,
+  grazeRadius,
   hitboxRadius,
+  projectileSpeed,
   spriteSize,
 } from '../src/game/config'
 import {
@@ -16,7 +16,6 @@ import {
   type Fight,
   type FrameInput,
 } from '../src/game/fight'
-import { flickOnRelease } from '../src/game/input'
 import { nextQuality, type QualityState } from '../src/game/quality'
 import { rankFor } from '../src/game/rank'
 import { emptySave, recordRun } from '../src/persist'
@@ -51,22 +50,18 @@ function parkBullet(fight: Fight, x = fight.player.x, y = fight.player.y): Bulle
     r: hitboxRadius(fight.w),
     homingT: 0,
     life: 30,
-    justDodgeDashId: 0,
+    grazeCooldown: 0,
     didHit: false,
   }
   fight.attacks.push(bullet)
   return bullet
 }
 
-function release(speed: number, dirX = 1, dirY = 0): FrameInput {
+function dragShip(fight: Fight, x: number, y: number): FrameInput {
   return {
-    dragging: false,
-    dragX: 0,
-    dragY: 0,
-    released: true,
-    releaseSpeed: speed,
-    releaseDirX: dirX,
-    releaseDirY: dirY,
+    dragging: true,
+    fingerX: x,
+    fingerY: y + config.player.hoverWidths * fight.w,
     tap: false,
   }
 }
@@ -80,83 +75,59 @@ describe('hitbox', () => {
 })
 
 describe('movement', () => {
-  it('follows the finger delta and never teleports past max speed', () => {
-    const fight = playing(100, 200)
-    const start = fight.player.x
-    const dt = config.sim.maxFrameSec
-    const drag = { ...IDLE_INPUT, dragging: true, dragX: 10_000, dragY: 0 }
-    stepFight(fight, drag, dt)
-    const cap = config.player.maxSpeedWidthsPerSec * fight.w * dt
-    expect(fight.player.x - start).toBeCloseTo(cap)
-    stepFight(fight, drag, dt)
-    expect(fight.player.x - start).toBeCloseTo(cap * 2)
-    expect(fight.player.x).toBeLessThan(5_000)
-  })
-
-  it('does not dash in the middle of a drag', () => {
+  it('sits 0.12W above the finger and matches a full-screen drag in one frame', () => {
     const fight = playing()
-    stepFight(
-      fight,
-      {
-        ...IDLE_INPUT,
-        dragging: true,
-        dragX: 4,
-        releaseSpeed: flickThreshold(fight.w) * 4,
-        released: false,
-      },
-      0.016,
+    const x = fight.w * 0.2
+    const y = fight.h * 0.7
+    stepFight(fight, dragShip(fight, x, y), 0.016)
+    expect(fight.player.x).toBeCloseTo(x)
+    expect(fight.player.y).toBeCloseTo(y)
+    const farX = fight.w * 0.84
+    stepFight(fight, dragShip(fight, farX, y), 0.016)
+    expect(fight.player.x).toBeCloseTo(farX)
+    expect(fight.player.y).toBeCloseTo(y)
+    expect(fight.player.y).toBeCloseTo(
+      y + config.player.hoverWidths * fight.w - config.player.hoverWidths * fight.w,
     )
-    expect(fight.player.dashT).toBe(0)
-    expect(fight.player.dashesStarted).toBe(0)
   })
 })
 
-describe('flick', () => {
-  it('dashes only when release speed over the last 0.06s is above 2.5W/s', () => {
-    const width = 200
-    const windowSec = config.dash.flickWindowSec
-    const above = flickThreshold(width) * windowSec + 1
-    const exact = flickThreshold(width) * windowSec
-    expect(
-      flickOnRelease([{ x: 0, y: 0, t: 0 }], above, 0, windowSec, width).dash,
-    ).toBe(true)
-    expect(
-      flickOnRelease([{ x: 0, y: 0, t: 0 }], exact, 0, windowSec, width).dash,
-    ).toBe(false)
-  })
-})
-
-describe('dash', () => {
-  it('covers 0.25W in 0.15s and then waits 1.0s when it was not a just dodge', () => {
+describe('graze', () => {
+  it('triggers when an attack is inside 2.5 hitbox radii and outside the hitbox', () => {
     const fight = playing()
-    const start = fight.player.x
-    const speed = flickThreshold(fight.w) + 10
-    stepFight(fight, release(speed), config.sim.maxFrameSec)
-    advance(fight, config.dash.durationSec - config.sim.maxFrameSec)
-    expect(fight.player.x - start).toBeCloseTo(dashDistance(fight.w), 4)
-    expect(fight.player.dashT).toBe(0)
-    expect(fight.player.dashCooldown).toBeCloseTo(config.dash.cooldownSec)
-  })
-
-  it('is invincible for the dash and a real overlap is a just dodge', () => {
-    const fight = playing()
-    parkBullet(fight)
+    const bullet = parkBullet(fight, fight.player.x, fight.player.y)
+    const gap = (hitboxRadius(fight.w) + grazeRadius(fight.w)) / 2 + bullet.r
+    bullet.x = fight.player.x + gap
+    bullet.px = bullet.x
     const hp = fight.player.hp
-    stepFight(fight, release(flickThreshold(fight.w) + 5), 0.02)
+    stepFight(fight, IDLE_INPUT, 0.016)
     expect(fight.justDodges).toBe(1)
     expect(fight.player.hp).toBe(hp)
-    expect(fight.player.dashCooldown).toBe(config.dash.justDodgeCooldownSec)
-    expect(fight.slowT).toBeGreaterThan(0)
-    stepFight(fight, IDLE_INPUT, 0.02)
+    expect(fight.slowT).toBeGreaterThan(config.justDodge.slowMoSec - 0.02)
+    stepFight(fight, IDLE_INPUT, 0.016)
     expect(fight.justDodges).toBe(1)
   })
 
-  it('does not start another dash until the current one finishes', () => {
+  it('does not let one bullet chain grazes during its cooldown', () => {
     const fight = playing()
-    const speed = flickThreshold(fight.w) + 5
-    stepFight(fight, release(speed), 0.02)
-    stepFight(fight, release(speed), 0.02)
-    expect(fight.player.dashesStarted).toBe(1)
+    const bullet = parkBullet(fight, fight.player.x, fight.player.y)
+    const gap = (hitboxRadius(fight.w) + grazeRadius(fight.w)) / 2 + bullet.r
+    bullet.x = fight.player.x + gap
+    bullet.px = bullet.x
+    stepFight(fight, IDLE_INPUT, 0.016)
+    expect(fight.justDodges).toBe(1)
+    advance(fight, config.graze.cooldownSec * 0.5)
+    expect(fight.justDodges).toBe(1)
+    advance(fight, config.graze.cooldownSec)
+    expect(fight.justDodges).toBe(2)
+  })
+
+  it('still hurts on a real overlap and does not also graze', () => {
+    const fight = playing()
+    parkBullet(fight)
+    stepFight(fight, IDLE_INPUT, 0.016)
+    expect(fight.player.hp).toBe(config.player.hitPoints - 1)
+    expect(fight.justDodges).toBe(0)
   })
 })
 
@@ -184,27 +155,26 @@ describe('damage', () => {
     expect(bullet.y).toBeGreaterThan(y + 1)
   })
 
-  it('ignores overlaps for 1s after a hit and dies on the third hit', () => {
+  it('ignores overlaps for 1s after a hit and dies when the hearts are gone', () => {
     const fight = playing()
-    parkBullet(fight)
-    stepFight(fight, IDLE_INPUT, 0.016)
-    expect(fight.player.hp).toBe(2)
-    fight.attacks = []
-    parkBullet(fight)
-    stepFight(fight, IDLE_INPUT, 0.016)
-    expect(fight.player.hp).toBe(2)
-    fight.attacks = []
-    advance(fight, config.player.hitInvulnSec)
-    parkBullet(fight)
-    stepFight(fight, IDLE_INPUT, 0.016)
-    expect(fight.player.hp).toBe(1)
-    fight.attacks = []
-    advance(fight, config.player.hitInvulnSec)
-    parkBullet(fight)
-    const result = stepFight(fight, IDLE_INPUT, 0.016)
-    expect(result.died).toBe(true)
-    expect(fight.mode).toBe('dead')
-    expect(fight.player.hits).toBe(3)
+    for (let heart = config.player.hitPoints; heart > 0; heart--) {
+      parkBullet(fight)
+      const result = stepFight(fight, IDLE_INPUT, 0.016)
+      expect(fight.player.hp).toBe(heart - 1)
+      fight.attacks = []
+      if (heart > 1) {
+        expect(result.died).toBe(false)
+        parkBullet(fight)
+        stepFight(fight, IDLE_INPUT, 0.016)
+        expect(fight.player.hp).toBe(heart - 1)
+        fight.attacks = []
+        advance(fight, config.player.hitInvulnSec)
+      } else {
+        expect(result.died).toBe(true)
+        expect(fight.mode).toBe('dead')
+      }
+    }
+    expect(fight.player.hits).toBe(config.player.hitPoints)
   })
 
   it('restarts instantly on tap', () => {
@@ -223,8 +193,11 @@ describe('damage', () => {
 describe('just dodge payoff', () => {
   it('slows for 0.3s and then deals 30 DPS for 3s', () => {
     const fight = playing()
-    parkBullet(fight)
-    stepFight(fight, release(flickThreshold(fight.w) + 5), 0.02)
+    const bullet = parkBullet(fight, fight.player.x, fight.player.y)
+    const gap = (hitboxRadius(fight.w) + grazeRadius(fight.w)) / 2 + bullet.r
+    bullet.x = fight.player.x + gap
+    bullet.px = bullet.x
+    stepFight(fight, IDLE_INPUT, 0.02)
     expect(fight.slowT).toBeGreaterThan(config.justDodge.slowMoSec - 0.03)
     expect(fight.boostT).toBe(0)
     advance(fight, config.justDodge.slowMoSec)
@@ -239,7 +212,7 @@ describe('just dodge payoff', () => {
 })
 
 describe('boss script', () => {
-  it('telegraphs 0.6s and leaves a 1.2s gap above half HP', () => {
+  it('telegraphs 0.9s and leaves a 1.2s gap above half HP', () => {
     const fight = createFight({
       w: config.reference.width,
       h: config.reference.height,
@@ -287,45 +260,63 @@ describe('boss script', () => {
     advance(fight, config.boss.missileHomingSec + 0.05)
     expect(missile.homingT).toBe(0)
     const speed = Math.hypot(missile.vx, missile.vy)
-    expect(speed).toBeCloseTo(config.boss.missileBoostSpeedWidthsPerSec * fight.w, 0)
+    expect(speed).toBeCloseTo(
+      projectileSpeed(fight.w, config.boss.missileBoostSpeedWidthsPerSec),
+      0,
+    )
   })
 })
 
 describe('rank', () => {
-  it('gives S only for a clear at or under 55s with zero hits', () => {
-    expect(rankFor(true, 55, 0)).toBe('S')
-    expect(rankFor(true, 55, 1)).toBe('A')
-    expect(rankFor(true, 55.01, 0)).toBe('A')
-    expect(rankFor(true, 75, 2)).toBe('A')
-    expect(rankFor(true, 75.01, 0)).toBe('B')
-    expect(rankFor(true, 110, 0)).toBe('B')
+  it('gives S only for a fast clear with zero hits', () => {
+    expect(rankFor(true, config.rank.sMaxClearSec, 0)).toBe('S')
+    expect(rankFor(true, config.rank.sMaxClearSec, 1)).toBe('A')
+    expect(rankFor(true, config.rank.sMaxClearSec + 0.01, 0)).toBe('A')
+    expect(rankFor(true, config.rank.aMaxClearSec, 2)).toBe('A')
+    expect(rankFor(true, config.rank.aMaxClearSec + 0.01, 0)).toBe('B')
     expect(rankFor(false, 20, 0)).toBeNull()
   })
 })
 
 describe('clear time', () => {
-  it('reports 110s / 80s / 50s for 0 / 5 / 10 just dodges', () => {
-    expect(expectedClearSeconds(0)).toBe(110)
-    expect(expectedClearSeconds(5)).toBe(80)
-    expect(expectedClearSeconds(10)).toBe(50)
+  it('reports 150s / 120s / 90s for 0 / 5 / 10 grazes', () => {
+    expect(expectedClearSeconds(0)).toBe(150)
+    expect(expectedClearSeconds(5)).toBe(120)
+    expect(expectedClearSeconds(10)).toBe(90)
     const times = [0, 5, 10].map((count) => simulateClearTime(count))
-    console.log(
-      `CLEAR_TIMES ${times.map((time) => time.toFixed(4)).join(' ')}`,
-    )
-    expect(times[0]).toBeCloseTo(110, 3)
-    expect(times[1]).toBeCloseTo(80, 3)
-    expect(times[2]).toBeCloseTo(50, 3)
+    console.log(`CLEAR_TIMES ${times.map((time) => time.toFixed(4)).join(' ')}`)
+    expect(times[0]).toBeCloseTo(150, 3)
+    expect(times[1]).toBeCloseTo(120, 3)
+    expect(times[2]).toBeCloseTo(90, 3)
     expect(rankFor(true, times[0]!, 0)).toBe('B')
-    expect(rankFor(true, times[1]!, 0)).toBe('B')
-    expect(rankFor(true, times[2]!, 0)).toBe('S')
+    expect(rankFor(true, times[1]!, 0)).toBe('A')
+    expect(rankFor(true, times[2]!, 0)).toBe('A')
+    expect(rankFor(true, times[2]!, 1)).not.toBe('S')
   })
 })
 
-describe('blind dash bot', () => {
-  it('does not earn S by dashing on cooldown without reading telegraphs', () => {
-    const report = runBlindDashBot()
-    console.log(`BLIND_BOT ${JSON.stringify(report)}`)
-    expect(report.rank).not.toBe('S')
+describe('drag bots', () => {
+  it('clears in about 60-120s, faster when it grazes, and a random drag dies', () => {
+    const none = runNoGrazeBot()
+    const frequent = runFrequentGrazeBot()
+    const random = runRandomDragBot()
+    console.log(`NO_GRAZE ${JSON.stringify(none)}`)
+    console.log(`FREQUENT_GRAZE ${JSON.stringify(frequent)}`)
+    console.log(`RANDOM_DRAG ${JSON.stringify(random)}`)
+    expect(none.mode).toBe('clear')
+    expect(none.time).toBeGreaterThan(100)
+    expect(none.time).toBeLessThan(130)
+    expect(frequent.mode).toBe('clear')
+    expect(frequent.justDodges).toBeGreaterThan(none.justDodges)
+    expect(frequent.time).toBeGreaterThan(55)
+    expect(frequent.time).toBeLessThan(75)
+    expect(frequent.time).toBeLessThan(none.time - 30)
+    if (frequent.hits === 0) expect(frequent.rank).toBe('S')
+    else expect(frequent.rank).not.toBe('S')
+    expect(random.mode).toBe('dead')
+    expect(random.hits).toBe(config.player.hitPoints)
+    expect(random.time).toBeGreaterThan(12)
+    expect(random.time).toBeLessThan(30)
   })
 })
 

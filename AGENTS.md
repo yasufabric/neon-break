@@ -1,17 +1,17 @@
 # Neon Break
 
-Portrait phone boss fight. Drag to move, release a flick to dash, and overlap an attack during that dash to just-dodge.
+Portrait phone boss fight. Drag to move. The ship sits 0.12W above the finger and follows it exactly. An attack that passes inside 2.5 hitbox radii without hitting is a graze.
 
 ## Rules
 
 Tunable numbers live in `src/game/config.ts`. The sim in `src/game/` is headless and is what `npm test` covers.
 
-- Ship speed caps at 1.2 screen-widths per second. A flick is decided only on finger release.
-- Dash is 0.25 widths over 0.15s and is invincible the whole way. A dash that does not just-dodge waits 1.0s. A just dodge clears that wait.
-- Just dodge plays 0.3s of slow-motion, then 3s at 30 DPS (base DPS is 10). Boss HP is 1100, so a perfect-hit fight is 110s / 80s / 50s at 0 / 5 / 10 non-overlapping just dodges.
-- Boss telegraphs for 0.6s. Gap is 1.2s, or 0.8s under half HP when two attack types fire together.
-- Three hits end the run, with 1s of invincibility after each hit. One tap retries.
-- S is a clear in 55s or less with zero hits. A is any other clear in 75s or less. B is any other clear.
+- Drag only. No dash, no flick, no speed cap, no smoothing.
+- A graze plays 0.3s of slow-motion, then 3s at 30 DPS (base DPS is 10). The same attack cannot graze again for 1s.
+- Boss HP is 1500, so a perfect-hit fight is 150s / 120s / 90s at 0 / 5 / 10 non-overlapping grazes. Simulated drag clears land around 60–120s.
+- Boss telegraphs for 0.9s. Projectile speeds are 75% of the old values. The laser is a horizontal band you can drag under.
+- Five hits end the run, with 1s of invincibility after each hit. One tap retries.
+- S is a clear in 75s or less with zero hits. A is any other clear in 120s or less. B is any other clear.
 
 ## Checks
 

@@ -193,6 +193,7 @@ function spawnTutorialStraight(fight: Fight, aimX: number, aimY: number): void {
     homingT: 0,
     life: config.boss.bulletLifeSec,
     grazeCooldown: 0,
+    grazePass: false,
     didHit: false,
   })
 }
@@ -239,6 +240,7 @@ function spawnStraight(fight: Fight): void {
       homingT: 0,
       life: config.boss.bulletLifeSec,
       grazeCooldown: 0,
+      grazePass: false,
       didHit: false,
     })
   }
@@ -264,6 +266,7 @@ function spawnLaser(fight: Fight): void {
     t: 0,
     duration: config.boss.laserSweepSec,
     grazeCooldown: 0,
+    grazePass: false,
     didHit: false,
   }
   fight.attacks.push(laser)
@@ -293,6 +296,7 @@ function spawnMissiles(fight: Fight): void {
       homingT: config.boss.missileHomingSec,
       life: config.boss.missileLifeSec,
       grazeCooldown: 0,
+      grazePass: false,
       didHit: false,
     }
     fight.attacks.push(missile)

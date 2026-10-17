@@ -2,7 +2,7 @@ import { config } from './config'
 
 export type Rank = 'S' | 'A' | 'B'
 
-/** S is a fast clear with no hits. A is any clear at or under 75s. B is every other clear. */
+/** S is a clear in the S window with no hits. A is any other clear inside the A window. B is every other clear. */
 export function rankFor(cleared: boolean, time: number, hits: number): Rank | null {
   if (!cleared) return null
   if (time <= config.rank.sMaxClearSec && hits <= config.rank.sMaxHits) return 'S'

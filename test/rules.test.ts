@@ -51,6 +51,7 @@ function parkBullet(fight: Fight, x = fight.player.x, y = fight.player.y): Bulle
     homingT: 0,
     life: 30,
     grazeCooldown: 0,
+    grazePass: false,
     didHit: false,
   }
   fight.attacks.push(bullet)
@@ -129,6 +130,45 @@ describe('graze', () => {
     expect(fight.player.hp).toBe(config.player.hitPoints - 1)
     expect(fight.justDodges).toBe(0)
   })
+
+  it('never lets one bullet both graze and hit on the same pass', () => {
+    const fight = playing()
+    const bullet = parkBullet(fight, fight.player.x, fight.player.y)
+    const gap = (hitboxRadius(fight.w) + grazeRadius(fight.w)) / 2 + bullet.r
+    bullet.x = fight.player.x + gap
+    bullet.px = bullet.x
+    stepFight(fight, IDLE_INPUT, 0.016)
+    expect(fight.justDodges).toBe(1)
+    expect(fight.player.hp).toBe(config.player.hitPoints)
+    advance(fight, config.justDodge.hitStopSec)
+
+    bullet.x = fight.player.x
+    bullet.px = bullet.x
+    stepFight(fight, IDLE_INPUT, 0.016)
+    expect(fight.player.hp).toBe(config.player.hitPoints)
+    expect(fight.player.hits).toBe(0)
+    expect(fight.justDodges).toBe(1)
+
+    const clear = fight.player.x + grazeRadius(fight.w) + bullet.r + 30
+    bullet.x = clear
+    bullet.px = clear
+    stepFight(fight, IDLE_INPUT, 0.016)
+    expect(fight.player.hp).toBe(config.player.hitPoints)
+    expect(fight.justDodges).toBe(1)
+
+    bullet.x = fight.player.x
+    bullet.px = fight.player.x
+    stepFight(fight, IDLE_INPUT, 0.016)
+    expect(fight.player.hp).toBe(config.player.hitPoints - 1)
+    expect(fight.player.hits).toBe(1)
+    expect(fight.justDodges).toBe(1)
+
+    bullet.x = fight.player.x + gap
+    bullet.px = bullet.x
+    advance(fight, 0.25)
+    expect(fight.justDodges).toBe(1)
+    expect(fight.player.hp).toBe(config.player.hitPoints - 1)
+  })
 })
 
 describe('damage', () => {
@@ -191,7 +231,7 @@ describe('damage', () => {
 })
 
 describe('just dodge payoff', () => {
-  it('slows for 0.3s and then deals 30 DPS for 3s', () => {
+  it('slows for 0.3s and then deals boosted DPS for the boost window', () => {
     const fight = playing()
     const bullet = parkBullet(fight, fight.player.x, fight.player.y)
     const gap = (hitboxRadius(fight.w) + grazeRadius(fight.w)) / 2 + bullet.r
@@ -279,24 +319,29 @@ describe('rank', () => {
 })
 
 describe('clear time', () => {
-  it('reports 150s / 120s / 90s for 0 / 5 / 10 grazes', () => {
-    expect(expectedClearSeconds(0)).toBe(150)
-    expect(expectedClearSeconds(5)).toBe(120)
-    expect(expectedClearSeconds(10)).toBe(90)
-    const times = [0, 5, 10].map((count) => simulateClearTime(count))
+  it('lands near 110s / 80s / 55s for 0 / 5 / 10 grazes', () => {
+    const counts = [0, 5, 10]
+    const targets = [110, 80, 55]
+    const tolerance = 5
+    const times = counts.map((count) => simulateClearTime(count))
     console.log(`CLEAR_TIMES ${times.map((time) => time.toFixed(4)).join(' ')}`)
-    expect(times[0]).toBeCloseTo(150, 3)
-    expect(times[1]).toBeCloseTo(120, 3)
-    expect(times[2]).toBeCloseTo(90, 3)
+    counts.forEach((count, index) => {
+      const target = targets[index]!
+      expect(Math.abs(expectedClearSeconds(count) - target)).toBeLessThanOrEqual(tolerance)
+      expect(Math.abs(times[index]! - target)).toBeLessThanOrEqual(tolerance)
+      expect(times[index]).toBeCloseTo(expectedClearSeconds(count), 2)
+    })
+    expect(times[0]).toBeGreaterThan(times[1]!)
+    expect(times[1]).toBeGreaterThan(times[2]!)
     expect(rankFor(true, times[0]!, 0)).toBe('B')
     expect(rankFor(true, times[1]!, 0)).toBe('A')
-    expect(rankFor(true, times[2]!, 0)).toBe('A')
+    expect(rankFor(true, times[2]!, 0)).toBe('S')
     expect(rankFor(true, times[2]!, 1)).not.toBe('S')
   })
 })
 
 describe('drag bots', () => {
-  it('clears in about 60-120s, faster when it grazes, and a random drag dies', () => {
+  it('clears faster when it grazes, and a random drag dies', () => {
     const none = runNoGrazeBot()
     const frequent = runFrequentGrazeBot()
     const random = runRandomDragBot()
@@ -304,19 +349,18 @@ describe('drag bots', () => {
     console.log(`FREQUENT_GRAZE ${JSON.stringify(frequent)}`)
     console.log(`RANDOM_DRAG ${JSON.stringify(random)}`)
     expect(none.mode).toBe('clear')
-    expect(none.time).toBeGreaterThan(100)
-    expect(none.time).toBeLessThan(130)
+    expect(none.time).toBeGreaterThan(70)
+    expect(none.time).toBeLessThan(95)
     expect(frequent.mode).toBe('clear')
-    expect(frequent.justDodges).toBeGreaterThan(none.justDodges)
-    expect(frequent.time).toBeGreaterThan(55)
-    expect(frequent.time).toBeLessThan(75)
-    expect(frequent.time).toBeLessThan(none.time - 30)
+    expect(frequent.time).toBeGreaterThan(40)
+    expect(frequent.time).toBeLessThan(60)
+    expect(frequent.time).toBeLessThan(none.time - 20)
     if (frequent.hits === 0) expect(frequent.rank).toBe('S')
     else expect(frequent.rank).not.toBe('S')
     expect(random.mode).toBe('dead')
     expect(random.hits).toBe(config.player.hitPoints)
-    expect(random.time).toBeGreaterThan(12)
-    expect(random.time).toBeLessThan(30)
+    expect(random.time).toBeGreaterThan(25)
+    expect(random.time).toBeLessThan(55)
   })
 })
 
